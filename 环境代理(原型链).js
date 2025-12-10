@@ -78,36 +78,77 @@ function watch(obj, name) {
             }
 
             return Reflect.set(target, property, newValue, receiver);
+        },
+        // 监听 in 操作符（检查属性是否存在）
+        has: (target, property) => {
+            let operationId;
+            let logMessage;
+
+            // 处理 Symbol 类型的属性
+            if (typeof property === 'symbol') {
+                const symbolDescription = property.description || 'no description';
+                logMessage = `对象=>${name},检查属性存在:${symbolDescription} (Symbol), 使用 in 操作符`;
+                operationId = `has:${name}:symbol:${symbolDescription}`;
+            } else {
+                logMessage = `对象=>${name},检查属性存在:${String(property)}, 使用 in 操作符`;
+                operationId = `has:${name}:${String(property)}`;
+            }
+
+            if (!loggedOperations.has(operationId)) {
+                loggedOperations.add(operationId);
+                logToConsole(logMessage);
+            }
+
+            return Reflect.has(target, property);
+        },
+        // 监听属性枚举操作（如 Object.keys、for...in 等）
+        ownKeys: (target) => {
+            const keys = Reflect.ownKeys(target);
+            // 截断过长的键列表显示
+            const displayKeys = truncateValue(keys.map(k =>
+                typeof k === 'symbol' ? `Symbol(${k.description || ''})` : String(k)
+            ).join(', '));
+
+            const operationId = `ownKeys:${name}:${keys.length}`;
+            const logMessage = `对象=>${name},枚举属性,共 ${keys.length} 个属性:${displayKeys}`;
+
+            if (!loggedOperations.has(operationId)) {
+                loggedOperations.add(operationId);
+                logToConsole(logMessage);
+            }
+
+            return keys;
         }
     });
 }
 
 //安全函数
 const safeFunction = (function () {
-    let initialized = false;
-    let myFunction_toString_symbol;
+    //处理安全函数
+    Function.prototype.$call = Function.prototype.call;
+    const $toString = Function.toString;
+    const myFunction_toString_symbol = Symbol('('.concat('', ')'));
+
+    const myToString = function myToString() {
+        return typeof this === 'function' && this[myFunction_toString_symbol] || $toString.$call(this);
+    }
+
     const set_native = function set_native(func, key, value) {
         Object.defineProperty(func, key, {
-            value: value,
-            writable: false,
-            enumerable: false,
-            configurable: false
+            "enumerable": false,
+            "configurable": true,
+            "writable": true,
+            "value": value
         });
-    };
+    }
+
+    delete Function.prototype['toString'];
+    set_native(Function.prototype, "toString", myToString);
+    set_native(Function.prototype.toString, myFunction_toString_symbol, "function toString() { [native code] }");
+
     return function (func) {
-        if (typeof func !== 'function') return;
-        if (!initialized) {
-            myFunction_toString_symbol = Symbol('functionToString');
-            initialized = true;
-        }
-        const originalToString = func.toString;
-        if (!func[myFunction_toString_symbol]) {
-            set_native(func, myFunction_toString_symbol, originalToString);
-            set_native(func, 'toString', function () {
-                return originalToString.call(this);
-            });
-        }
-    };
+        set_native(func, myFunction_toString_symbol, "function" + (func.name ? " " + func.name : "") + "() { [native code] }");
+    }
 })();
 
 //类构造函数
